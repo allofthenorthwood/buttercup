@@ -121,6 +121,18 @@ Spider.prototype.die = function () {
     }, this);
 };
 
+//
+// crosshair sprite
+//
+function Crosshair(game, x, y) {
+    Phaser.Sprite.call(this, game, x, y);
+    this.anchor.set(0.5, 0.5);
+}
+
+// inherit from Phaser.Sprite
+Crosshair.prototype = Object.create(Phaser.Sprite.prototype);
+Crosshair.prototype.constructor = Crosshair;
+
 
 // =============================================================================
 // game states
@@ -153,6 +165,9 @@ PlayState.init = function (data) {
     this.keys.w.onDown.add(jumpFunc, this);
     this.keys.space.onDown.add(jumpFunc, this);
 
+    this.game.input.mouse.capture = true;
+
+
     this.coinPickupCount = 0;
     this.hasKey = false;
     this.level = (data.level || 0) % LEVEL_COUNT;
@@ -174,6 +189,7 @@ PlayState.preload = function () {
     this.game.load.image('invisible-wall', 'images/invisible_wall.png');
     this.game.load.image('icon:coin', 'images/coin_icon.png');
     this.game.load.image('key', 'images/key.png');
+    this.game.load.image('bullet', 'images/bullet.png');
 
     this.game.load.spritesheet('coin', 'images/coin_animated.png', 22, 22);
     this.game.load.spritesheet('spider', 'images/spider.png', 42, 32);
@@ -186,6 +202,7 @@ PlayState.preload = function () {
     this.game.load.audio('sfx:stomp', 'audio/stomp.wav');
     this.game.load.audio('sfx:key', 'audio/key.wav');
     this.game.load.audio('sfx:door', 'audio/door.wav');
+    this.game.load.audio('sfx:bark', 'audio/bark-1.wav');
 };
 
 PlayState.create = function () {
@@ -195,8 +212,14 @@ PlayState.create = function () {
         coin: this.game.add.audio('sfx:coin'),
         stomp: this.game.add.audio('sfx:stomp'),
         key: this.game.add.audio('sfx:key'),
-        door: this.game.add.audio('sfx:door')
+        door: this.game.add.audio('sfx:door'),
+        bark: this.game.add.audio('sfx:bark'),
     };
+    this.sfx.jump.volume = 0.2;
+    this.sfx.coin.volume = 0.2;
+    this.sfx.stomp.volume = 0.2;
+    this.sfx.key.volume = 0.2;
+    this.sfx.door.volume = 0.2;
 
     // create level
     this.game.add.image(0, 0, 'background');
@@ -209,6 +232,7 @@ PlayState.create = function () {
 PlayState.update = function () {
     this._handleCollisions();
     this._handleInput();
+    this._handleMouse();
 
     this.coinFont.text = `x${this.coinPickupCount}`;
     this.keyIcon.frame = this.hasKey ? 1 : 0;
@@ -223,6 +247,10 @@ PlayState._handleCollisions = function () {
         null, this);
     this.game.physics.arcade.overlap(this.hero, this.spiders,
         this._onHeroVsEnemy, null, this);
+    this.game.physics.arcade.overlap(this.bullets, this.spiders,
+        this._onBulletsVsEnemy, null, this);
+    this.game.physics.arcade.overlap(this.bullets, this.platforms,
+        this._onBulletsVsPlatform, null, this);
     this.game.physics.arcade.overlap(this.hero, this.key, this._onHeroVsKey,
         null, this);
     this.game.physics.arcade.overlap(this.hero, this.door, this._onHeroVsDoor,
@@ -242,7 +270,34 @@ PlayState._handleInput = function () {
     else { // stop
         this.hero.move(0);
     }
+
+
 };
+
+PlayState._handleMouse = function () {
+  this.crosshair.x = this.game.input.activePointer.x;
+  this.crosshair.y = this.game.input.activePointer.y;
+  if (this.game.input.activePointer.isDown)
+  {
+      PlayState.fire();
+  }
+}
+PlayState.fire = function () {
+    if (this.game.time.now > this.nextFire && this.bullets.countDead() > 0)
+    {
+        this.nextFire = this.game.time.now + this.fireRate;
+        const bullet = this.bullets.getFirstDead();
+        bullet.reset(this.hero.x + (20 * this.hero.scale.x), this.hero.y - 10);
+        bullet.anchor.set(0.5, 0.5);
+        bullet.scale.set(0.7, 0.7);
+        bullet.body.allowGravity = false;
+        const targetAngle = this.game.physics.arcade.moveToPointer(bullet, 500);
+        bullet.rotation = targetAngle + Math.PI/4;
+
+        this.sfx.bark.play();
+    }
+
+}
 
 PlayState._loadLevel = function (data) {
     // create all the groups/layers that we need
@@ -299,6 +354,22 @@ PlayState._spawnCharacters = function (data) {
     // spawn hero
     this.hero = new Hero(this.game, data.hero.x, data.hero.y);
     this.game.add.existing(this.hero);
+
+    // spawn crosshair
+    this.crosshair = new Crosshair(this.game, this.game.input.mousePointer.x, this.game.input.mousePointer.y);
+    this.game.add.existing(this.crosshair);
+
+    // bullets
+    this.bullets = this.game.add.group();
+    this.bullets.enableBody = true;
+    this.bullets.physicsBodyType = Phaser.Physics.ARCADE;
+
+    this.bullets.createMultiple(50, 'bullet');
+    this.bullets.setAll('checkWorldBounds', true);
+    this.bullets.setAll('outOfBoundsKill', true);
+
+    this.fireRate = 400;
+    this.nextFire = 0;
 };
 
 PlayState._spawnCoin = function (coin) {
@@ -352,6 +423,13 @@ PlayState._onHeroVsEnemy = function (hero, enemy) {
         this.game.state.restart(true, false, {level: this.level});
     }
 };
+PlayState._onBulletsVsEnemy = function (bullet, enemy) {
+  enemy.die();
+  this.sfx.stomp.play();
+}
+PlayState._onBulletsVsPlatform = function (bullet, enemy) {
+  bullet.kill();
+}
 
 PlayState._onHeroVsKey = function (hero, key) {
     this.sfx.key.play();
